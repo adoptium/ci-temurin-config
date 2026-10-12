@@ -21,7 +21,6 @@
  * Gate conditions (enforced in 190-publish.params.json stageCondition, but also
  * checked here for defence-in-depth):
  *   - RELEASE_TYPE must be "RELEASE" or "WEEKLY"
- *   - SCM_REF must be non-empty
  *
  * Called by StageScriptRunner with the pipeline config Map as the sole argument.
  * Returns 0 on success, 1 on failure.
@@ -47,10 +46,6 @@ int call(Map config) {
         echo "ℹ️  190-publish: RELEASE_TYPE='${releaseType}' is not RELEASE or WEEKLY — skipping"
         return 0
     }
-    if (!scmRef) {
-        echo 'ℹ️  190-publish: SCM_REF is not set — skipping'
-        return 0
-    }
 
     // ── Derive publish parameters ─────────────────────────────────────────────
 
@@ -68,24 +63,31 @@ int call(Map config) {
     echo '║  Remove the override once the new pipeline is fully validated.   ║'
     echo '╚══════════════════════════════════════════════════════════════════╝'
 
+    // TIMESTAMP: current UTC date in the format expected by the publish job
+    String timestamp = new Date().format('yyyy-MM-dd-HH-mm', TimeZone.getTimeZone('UTC'))
+
     // TAG: use OVERRIDE_PUBLISH_NAME when set by the trigger pipeline (it already
-    // has the correct form, e.g. "jdk-21.0.5+11-ea").  Fall back to deriving from
-    // SCM_REF for manual builds where OVERRIDE_PUBLISH_NAME is not supplied.
+    // has the correct form, e.g. "jdk-21.0.5+11-ea").
+    // If OVERRIDE_PUBLISH_NAME is not supplied:
+    // - Fall back to deriving from SCM_REF when non-blank
+    // - If SCM_REF is blank, generate the tag name as per legacy syntax: "${javaToBuild}-${timestamp}"
+    //   where javaToBuild is the openjdkVersion configuration property (e.g. "jdk21u").
     String overridePublishName = env.OVERRIDE_PUBLISH_NAME?.trim() ?: ''
     String tag
     if (overridePublishName) {
         tag = overridePublishName
         echo "  Using OVERRIDE_PUBLISH_NAME: ${tag}"
-    } else {
+    } else if (scmRef) {
         tag = scmRef.replace('_adopt', '')
         if (releaseType == 'WEEKLY') {
             tag = "${tag}-ea"
         }
         echo "  Derived TAG from SCM_REF: ${tag}"
+    } else {
+        String javaToBuild = config?.openjdkVersion ?: ''
+        tag = "${javaToBuild}-${timestamp}"
+        echo "  Derived TAG from javaToBuild: ${tag}"
     }
-
-    // TIMESTAMP: current UTC date in the format expected by the publish job
-    String timestamp = new Date().format('yyyy-MM-dd-HH-mm', TimeZone.getTimeZone('UTC'))
 
     // UPSTREAM job identity — standard Jenkins env vars
     String upstreamJobName   = env.JOB_NAME    ?: ''
