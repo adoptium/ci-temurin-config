@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ################################################################################
-# Temurin Vendor Implementation: 12-validate-sbom
+# Temurin Vendor Implementation: 120-validate-sbom
 #
 # Validates SBOM (Software Bill of Materials) files produced during the Build
 # stage. Clones temurin-build and delegates to tooling/validateSBOM.sh.
@@ -95,12 +95,14 @@ if [ -z "${SCM_REF:-}" ]; then
 	echo "Extracted SCM_REF from config: ${SCM_REF}"
 fi
 
-# Find all SBOM JSON files (excluding metadata files and params files)
-echo "Searching for SBOM files in ${INPUT_ARTIFACTS_DIR}..."
-SBOM_FILES=$(find "${INPUT_ARTIFACTS_DIR}" -name '*sbom*.json' -type f ! -name '*.params.json' | grep -v metadata || true)
+# Find all SBOM JSON files under INPUT_ARTIFACTS_DIR/BUILD_OUTPUT_DIR
+# BUILD_OUTPUT_DIR is injected by the pipeline from stage-constants.properties.
+SBOM_ARTIFACTS_DIR="${INPUT_ARTIFACTS_DIR}/${BUILD_OUTPUT_DIR}"
+echo "Searching for SBOM files in ${SBOM_ARTIFACTS_DIR}..."
+SBOM_FILES=$(find "${SBOM_ARTIFACTS_DIR}" -name '*sbom*.json' -type f ! -name '*.params.json' | grep -v metadata || true)
 
 if [ -z "${SBOM_FILES}" ]; then
-	echo "WARNING: No SBOM files found in ${INPUT_ARTIFACTS_DIR}"
+	echo "WARNING: No SBOM files found in ${SBOM_ARTIFACTS_DIR}"
 	echo "This may indicate that SBOM generation was not successful"
 	exit 1
 fi
@@ -110,6 +112,7 @@ echo "${SBOM_FILES}"
 
 # Validate each SBOM file
 VALIDATION_FAILED=0
+VALIDATION_RESULTS=()
 while IFS= read -r sbom_file; do
 	if [ -n "${sbom_file}" ]; then
 		echo ""
@@ -120,12 +123,30 @@ while IFS= read -r sbom_file; do
 			"${SCM_REF}" \
 			"${sbom_file}"; then
 			echo "SUCCESS: SBOM validation passed for ${sbom_file}"
+			VALIDATION_RESULTS+=("PASSED: ${sbom_file}")
 		else
 			echo "ERROR: SBOM validation failed for ${sbom_file}"
+			VALIDATION_RESULTS+=("FAILED: ${sbom_file}")
 			VALIDATION_FAILED=1
 		fi
 	fi
 done <<<"${SBOM_FILES}"
+
+# Write summary report to TARGET_DIR (required by pipeline framework)
+{
+	echo "=== Temurin SBOM Validation Report ==="
+	echo "Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	echo ""
+	for result in "${VALIDATION_RESULTS[@]}"; do
+		echo "${result}"
+	done
+	echo ""
+	if [ ${VALIDATION_FAILED} -eq 1 ]; then
+		echo "Overall result: FAILED"
+	else
+		echo "Overall result: PASSED"
+	fi
+} >"${TARGET_DIR}/sbom-validation.txt"
 
 if [ ${VALIDATION_FAILED} -eq 1 ]; then
 	echo ""

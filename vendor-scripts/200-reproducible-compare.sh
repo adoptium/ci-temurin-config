@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ################################################################################
-# Temurin Vendor Implementation: 20-reproducible-compare
+# Temurin Vendor Implementation: 200-reproducible-compare
 #
 # Compares a locally built JDK against the published Adoptium production binary
 # for the same version to verify reproducibility. Clones temurin-build and
@@ -32,20 +32,30 @@ set -euo pipefail
 #   SCM_REF              - Git tag/ref identifying the version to compare (mandatory, no default)
 #   BUILD_REF            - Git branch/tag for temurin-build (optional, falls back to pipeline-config.json)
 #
+# Optional Environment Variables:
+#   PIPELINE_ROOT        - Root of the ci-adoptium-pipelines checkout. Falls back
+#                          to WORKSPACE when not set (Jenkins sets WORKSPACE to the
+#                          pipeline repo checkout root).
+#
 ################################################################################
 
-# Source shared utilities from ci-adoptium-pipelines (resolved via PIPELINE_ROOT)
+# ---------------------------------------------------------------------------
+# Resolve shared library utilities from ci-adoptium-pipelines.
+# PIPELINE_ROOT: set by CI pipelines where WORKSPACE is not the location of
+#   the ci-adoptium-pipelines repo. Falls back to WORKSPACE if not set.
+# ---------------------------------------------------------------------------
+PIPELINE_LIB="${PIPELINE_ROOT:-${WORKSPACE}}/scripts/lib"
 # shellcheck disable=SC1091
-source "${PIPELINE_ROOT}/scripts/lib/logging-utils.sh"
+source "${PIPELINE_LIB}/logging-utils.sh"
 # shellcheck disable=SC1091
-source "${PIPELINE_ROOT}/scripts/lib/config-utils.sh"
+source "${PIPELINE_LIB}/config-utils.sh"
 
 log_section "Stage 20: Temurin Reproducible Build Comparison"
 
 # Validate standard environment (WORKSPACE, CONFIG_FILE, TARGET_DIR)
 validate_standard_environment
 
-# Derive RELEASE boolean from RELEASE_TYPE (consistent with 02-build.sh)
+# Derive RELEASE boolean from RELEASE_TYPE (consistent with 020-build.sh)
 RELEASE="$([[ "${RELEASE_TYPE:-NIGHTLY}" == "RELEASE" ]] && echo "true" || echo "false")"
 
 # SCM_REF must be explicitly provided — there is no meaningful default for this
@@ -215,15 +225,17 @@ zip) unzip -q "${UPSTREAM_JDK_FILE}" ;;
 esac
 log_info "Upstream JDK unpacked"
 
-# Find the locally built JDK in INPUT_ARTIFACTS_DIR
-log_info "Finding locally built JDK in: ${INPUT_ARTIFACTS_DIR}"
-BUILT_JDK_FILE=$(find "${INPUT_ARTIFACTS_DIR}" -name "OpenJDK*-jdk_*.${JDK_EXT}" | grep -v "sources\|debugimage\|testimage\|static-libs\|jre" | head -n 1)
+# Find the locally built JDK in INPUT_ARTIFACTS_DIR/BUILD_OUTPUT_DIR
+# BUILD_OUTPUT_DIR is injected by the pipeline from stage-constants.properties.
+BUILT_ARTIFACTS_DIR="${INPUT_ARTIFACTS_DIR}/${BUILD_OUTPUT_DIR}"
+log_info "Finding locally built JDK in: ${BUILT_ARTIFACTS_DIR}"
+BUILT_JDK_FILE=$(find "${BUILT_ARTIFACTS_DIR}" -name "OpenJDK*-jdk_*.${JDK_EXT}" | grep -v "sources\|debugimage\|testimage\|static-libs\|jre" | head -n 1)
 
 if [ -z "${BUILT_JDK_FILE}" ]; then
-	log_error "No locally built JDK found in ${INPUT_ARTIFACTS_DIR}"
+	log_error "No locally built JDK found in ${BUILT_ARTIFACTS_DIR}"
 	log_error "Expected pattern: OpenJDK*-jdk_*.${JDK_EXT}"
-	log_error "Files found in ${INPUT_ARTIFACTS_DIR}:"
-	ls -la "${INPUT_ARTIFACTS_DIR}"
+	log_error "Files found in ${BUILT_ARTIFACTS_DIR}:"
+	ls -la "${BUILT_ARTIFACTS_DIR}"
 	exit 1
 fi
 

@@ -1,7 +1,21 @@
 {
-  "stageId": "20-reproducible-compare",
+  "stageId": "200-reproducible-compare",
   "stageDisabled": false,
-  "stageCondition": [],
+  "stageTimeoutMinutes": 0,
+  "stageCondition": [
+    { "param": "RUN_REPRODUCIBLE_COMPARE", "value": true },
+    { "param": "SCM_REF", "value": "regex:.+" }
+  ],
+  "stageInputArtifacts": [
+    "${BUILD_OUTPUT_DIR}/*.tar.gz",
+    "${BUILD_OUTPUT_DIR}/*.zip",
+    "${BUILD_OUTPUT_DIR}/*sbom*.json"
+  ],
+  "stageOutputArtifacts": [
+    "comparison-report.txt",
+    "reprotest.diff",
+    "ReproduciblePercent"
+  ],
   "description": "Temurin reproducible build comparison stage. SCM_REF must be specified — it identifies the exact published Adoptium binary to compare against. BUILD_REF pins the temurin-build branch used for the comparison tooling.",
   "parameterGroups": [
     {

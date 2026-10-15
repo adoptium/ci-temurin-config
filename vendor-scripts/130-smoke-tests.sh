@@ -82,6 +82,27 @@ main() {
 	local build_ref_source="default"
 	[[ -n "${BUILD_REF:-}" ]] && build_ref_source="param"
 
+	# -----------------------------------------------------------------------
+	# Override build repo/ref from build-metadata.json when available.
+	# The 020-build stage records the *actual* ref used after any SBOM-driven
+	# override, which may differ from what was supplied as a stage parameter.
+	# This ensures we test against the exact source that produced the artifact.
+	# -----------------------------------------------------------------------
+	local build_metadata_file="${INPUT_ARTIFACTS_DIR}/build-metadata.json"
+	if [[ -f "${build_metadata_file}" ]]; then
+		local meta_build_ref
+		local meta_build_repo_url
+		meta_build_ref=$(get_config_value "${build_metadata_file}" ".buildRef" "")
+		meta_build_repo_url=$(get_config_value "${build_metadata_file}" ".buildRepoUrl" "")
+		if [[ -n "${meta_build_ref}" ]]; then
+			temurin_build_branch="${meta_build_ref}"
+			build_ref_source="build-metadata"
+		fi
+		if [[ -n "${meta_build_repo_url}" ]]; then
+			temurin_build_repo="${meta_build_repo_url}"
+		fi
+	fi
+
 	log_info "Test Configuration:"
 	log_info "  Java Version     : ${java_version}"
 	log_info "  Target OS        : ${target_os}"
@@ -119,11 +140,24 @@ main() {
 	# -----------------------------------------------------------------------
 	# Run get.sh to pull in temurin-build functional tests
 	# -----------------------------------------------------------------------
+	# get.sh --vendor_branches passes the value as `-b <branch>` to git clone, which
+	# only accepts branch/tag names — not bare commit SHAs.  When the resolved ref is
+	# a full 40-hex SHA (e.g. recorded by build-metadata.json after an SBOM override),
+	# pass it via --vendor_shas instead so get.sh clones HEAD then checks out the SHA.
+	local vendor_branch_arg=()
+	local vendor_sha_arg=()
+	if [[ "${temurin_build_branch}" =~ ^[0-9a-f]{40}$ ]]; then
+		vendor_sha_arg=(--vendor_shas "${temurin_build_branch}")
+	else
+		vendor_branch_arg=(--vendor_branches "${temurin_build_branch}")
+	fi
+
 	log_section "Running aqa-tests get.sh"
 	cd "${aqa_dir}"
 	bash get.sh \
 		--vendor_repos "${temurin_build_repo}" \
-		--vendor_branches "${temurin_build_branch}" \
+		"${vendor_branch_arg[@]+"${vendor_branch_arg[@]}"}" \
+		"${vendor_sha_arg[@]+"${vendor_sha_arg[@]}"}" \
 		--vendor_dirs "${TEMURIN_FUNCTIONAL_DIR}" \
 		--clone_openj9 true
 
@@ -158,13 +192,15 @@ main() {
 }
 
 # ---------------------------------------------------------------------------
-# Find the main JDK image tarball/zip in INPUT_ARTIFACTS_DIR
+# Find the main JDK image tarball/zip in INPUT_ARTIFACTS_DIR/BUILD_OUTPUT_DIR
 # ---------------------------------------------------------------------------
 find_jdk_artifact() {
 	# Prefer the JDK image (pattern: *jdk_*.tar.gz or *jdk_*.zip)
 	# Exclude jre/testimage/debugimage/static-libs variants
+	# BUILD_OUTPUT_DIR is injected by the pipeline from stage-constants.properties.
+	local artifacts_dir="${INPUT_ARTIFACTS_DIR}/${BUILD_OUTPUT_DIR}"
 	local artifact
-	artifact=$(find "${INPUT_ARTIFACTS_DIR}" \
+	artifact=$(find "${artifacts_dir}" \
 		\( -name "*jdk_*.tar.gz" -o -name "*jdk_*.zip" \) \
 		! -name "*jre_*" \
 		! -name "*testimage*" \
@@ -173,10 +209,10 @@ find_jdk_artifact() {
 		sort | head -n 1)
 
 	if [[ -z "${artifact}" ]]; then
-		log_error "No JDK image artifact found in ${INPUT_ARTIFACTS_DIR}"
+		log_error "No JDK image artifact found in ${artifacts_dir}"
 		log_error "Expected pattern: *jdk_*.tar.gz or *jdk_*.zip"
 		log_error "Available files:"
-		find "${INPUT_ARTIFACTS_DIR}" \( -name "*.tar.gz" -o -name "*.zip" \) \
+		find "${artifacts_dir}" \( -name "*.tar.gz" -o -name "*.zip" \) \
 			-exec basename {} \; 2>/dev/null || true
 		exit 1
 	fi
